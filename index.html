@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .min-h-screen { min-height: 100vh; }
+        .shadow-sm { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
+        .border { border-width: 1px; }
+        .border-l-4 { border-left-width: 4px; }
+        .hover\:bg-gray-300:hover { background-color: rgb(209 213 219); }
+        .hover\:bg-blue-600:hover { background-color: rgb(37 99 235); }
+        .hover\:bg-blue-700:hover { background-color: rgb(29 78 216); }
+        .focus\:outline-none:focus { outline: 2px solid transparent; outline-offset: 2px; }
+        .focus\:ring-2:focus { --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color); --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color); box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000); }
+        .focus\:ring-blue-500:focus { --tw-ring-color: rgb(59 130 246); }
+        .transition-colors { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef } = React;
+        const { Calendar, Upload, Eye } = lucide;
+
+        const CalendarVisualizer = () => {
+            const [events, setEvents] = useState([]);
+            const [viewMode, setViewMode] = useState('month-week');
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const fileInputRef = useRef(null);
+
+            // Parse ICS file content
+            const parseICS = (icsContent) => {
+                const events = [];
+                const lines = icsContent.split('\n').map(line => line.trim());
+                
+                let currentEvent = null;
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    
+                    if (line === 'BEGIN:VEVENT') {
+                        currentEvent = {};
+                    } else if (line === 'END:VEVENT' && currentEvent) {
+                        if (currentEvent.summary && currentEvent.dtstart) {
+                            events.push(currentEvent);
+                        }
+                        currentEvent = null;
+                    } else if (currentEvent) {
+                        if (line.startsWith('SUMMARY:')) {
+                            currentEvent.summary = line.substring(8);
+                        } else if (line.startsWith('DTSTART')) {
+                            const dateMatch = line.match(/(\d{8}T?\d{0,6})/);
+                            if (dateMatch) {
+                                const dateStr = dateMatch[1];
+                                if (dateStr.includes('T')) {
+                                    currentEvent.dtstart = new Date(
+                                        parseInt(dateStr.substring(0, 4)),
+                                        parseInt(dateStr.substring(4, 6)) - 1,
+                                        parseInt(dateStr.substring(6, 8)),
+                                        parseInt(dateStr.substring(9, 11) || 0),
+                                        parseInt(dateStr.substring(11, 13) || 0)
+                                    );
+                                } else {
+                                    currentEvent.dtstart = new Date(
+                                        parseInt(dateStr.substring(0, 4)),
+                                        parseInt(dateStr.substring(4, 6)) - 1,
+                                        parseInt(dateStr.substring(6, 8))
+                                    );
+                                    currentEvent.allDay = true;
+                                }
+                            }
+                        } else if (line.startsWith('DTEND')) {
+                            const dateMatch = line.match(/(\d{8}T?\d{0,6})/);
+                            if (dateMatch) {
+                                const dateStr = dateMatch[1];
+                                if (dateStr.includes('T')) {
+                                    currentEvent.dtend = new Date(
+                                        parseInt(dateStr.substring(0, 4)),
+                                        parseInt(dateStr.substring(4, 6)) - 1,
+                                        parseInt(dateStr.substring(6, 8)),
+                                        parseInt(dateStr.substring(9, 11) || 0),
+                                        parseInt(dateStr.substring(11, 13) || 0)
+                                    );
+                                } else {
+                                    currentEvent.dtend = new Date(
+                                        parseInt(dateStr.substring(0, 4)),
+                                        parseInt(dateStr.substring(4, 6)) - 1,
+                                        parseInt(dateStr.substring(6, 8))
+                                    );
+                                }
+                            }
+                        } else if (line.startsWith('DESCRIPTION:')) {
+                            currentEvent.description = line.substring(12);
+                        } else if (line.startsWith('LOCATION:')) {
+                            currentEvent.location = line.substring(9);
+                        }
+                    }
+                }
+                
+                return events.sort((a, b) => a.dtstart - b.dtstart);
+            };
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (file && file.name.endsWith('.ics')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const parsedEvents = parseICS(e.target.result);
+                            setEvents(parsedEvents);
+                        } catch (error) {
+                            alert('Error parsing ICS file. Please check the file format.');
+                        }
+                    };
+                    reader.readAsText(file);
+                } else {
+                    alert('Please select a valid .ics file');
+                }
+            };
+
+            const getWeekNumber = (date) => {
+                const startOfYear = new Date(date.getFullYear(), 0, 1);
+                const pastDaysOfYear = (date - startOfYear) / 86400000;
+                return Math.ceil((pastDaysOfYear + startOfYear.getDay() + 1) / 7);
+            };
+
+            const formatTime = (date) => {
+                return date.toLocaleTimeString('en-US', { 
+                    hour: 'numeric', 
+                    minute: '2-digit',
+                    hour12: true 
+                });
+            };
+
+            // Month-Week View
+            const MonthWeekView = () => {
+                const months = {};
+                
+                // Initialize months from June 2025 onwards
+                const startDate = new Date(2025, 5); // June 2025
+                const currentYear = new Date().getFullYear();
+                const endYear = Math.max(currentYear + 1, 2025);
+                
+                for (let year = 2025; year <= endYear; year++) {
+                    const startMonth = year === 2025 ? 5 : 0; // June for 2025, January for other years
+                    const endMonth = 11; // December
+                    
+                    for (let i = startMonth; i <= endMonth; i++) {
+                        const monthDate = new Date(year, i, 1);
+                        const monthKey = `${monthDate.getFullYear()}-${monthDate.getMonth()}`;
+                        months[monthKey] = {
+                            name: monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                            weeks: {}
+                        };
+                    }
+                }
+                
+                // Group events by month and week (only June 2025 onwards)
+                events.forEach(event => {
+                    const eventDate = event.dtstart;
+                    
+                    // Filter events to only include June 2025 onwards
+                    if (eventDate < new Date(2025, 5, 1)) {
+                        return;
+                    }
+                    
+                    const eventMonth = eventDate.getMonth();
+                    const eventYear = eventDate.getFullYear();
+                    const monthKey = `${eventYear}-${eventMonth}`;
+                    const weekNum = getWeekNumber(eventDate);
+                    
+                    if (!months[monthKey]) {
+                        const monthDate = new Date(eventYear, eventMonth, 1);
+                        months[monthKey] = {
+                            name: monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                            weeks: {}
+                        };
+                    }
+                    
+                    if (!months[monthKey].weeks[weekNum]) {
+                        months[monthKey].weeks[weekNum] = [];
+                    }
+                    
+                    months[monthKey].weeks[weekNum].push(event);
+                });
+
+                return React.createElement('div', { className: 'space-y-8' },
+                    Object.entries(months)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([monthKey, monthData]) =>
+                            React.createElement('div', { key: monthKey, className: 'bg-white rounded-lg shadow-sm border p-6' },
+                                React.createElement('h2', { className: 'text-2xl font-bold text-gray-800 mb-6 border-b pb-2' }, monthData.name),
+                                
+                                Object.keys(monthData.weeks).length === 0 ? 
+                                    React.createElement('p', { className: 'text-gray-500 italic text-center py-8' }, 'No events this month') :
+                                    React.createElement('div', { className: 'space-y-6' },
+                                        Object.entries(monthData.weeks)
+                                            .sort(([a], [b]) => parseInt(a) - parseInt(b))
+                                            .map(([weekNum, weekEvents]) =>
+                                                React.createElement('div', { key: weekNum, className: 'bg-gray-50 rounded-lg p-4' },
+                                                    React.createElement('h3', { className: 'text-lg font-semibold text-gray-700 mb-3' }, `Week ${weekNum}`),
+                                                    React.createElement('div', { className: 'space-y-2' },
+                                                        weekEvents.map((event, idx) =>
+                                                            React.createElement('div', { key: idx, className: 'bg-white rounded-md p-3 border-l-4 border-blue-500' },
+                                                                React.createElement('div', { className: 'flex justify-between items-start' },
+                                                                    React.createElement('div', { className: 'flex-1' },
+                                                                        React.createElement('h4', { className: 'font-medium text-gray-900' }, event.summary),
+                                                                        React.createElement('p', { className: 'text-sm text-gray-600' },
+                                                                            `${event.dtstart.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })} - ${event.dtstart.toLocaleDateString('en-US', { weekday: 'short' })}${!event.allDay ? ` at ${formatTime(event.dtstart)}` : ''}`
+                                                                        ),
+                                                                        event.location && React.createElement('p', { className: 'text-sm text-gray-500 mt-1' }, `📍 ${event.location}`)
+                                                                    )
+                                                                )
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                    )
+                            )
+                        )
+                );
+            };
+
+            // Traditional Calendar Grid View
+            const CalendarGridView = () => {
+                const today = new Date();
+                const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+                const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+                const startDate = new Date(firstDay);
+                startDate.setDate(startDate.getDate() - firstDay.getDay());
+                
+                const days = [];
+                const currentDateIter = new Date(startDate);
+                
+                while (currentDateIter <= lastDay || days.length % 7 !== 0) {
+                    days.push(new Date(currentDateIter));
+                    currentDateIter.setDate(currentDateIter.getDate() + 1);
+                }
+
+                const getDayEvents = (date) => {
+                    return events.filter(event => {
+                        const eventDate = new Date(event.dtstart);
+                        return eventDate.toDateString() === date.toDateString();
+                    });
+                };
+
+                return React.createElement('div', { className: 'bg-white rounded-lg shadow-sm border' },
+                    React.createElement('div', { className: 'p-4 border-b' },
+                        React.createElement('div', { className: 'flex justify-between items-center' },
+                            React.createElement('h2', { className: 'text-xl font-bold' }, 
+                                currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                            ),
+                            React.createElement('div', { className: 'flex space-x-2' },
+                                React.createElement('button', { 
+                                    onClick: () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)),
+                                    className: 'px-3 py-1 bg-gray-200 rounded hover:bg-gray-300'
+                                }, '←'),
+                                React.createElement('button', { 
+                                    onClick: () => setCurrentDate(new Date()),
+                                    className: 'px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600'
+                                }, 'Today'),
+                                React.createElement('button', { 
+                                    onClick: () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)),
+                                    className: 'px-3 py-1 bg-gray-200 rounded hover:bg-gray-300'
+                                }, '→')
+                            )
+                        )
+                    ),
+                    
+                    React.createElement('div', { className: 'grid grid-cols-7 gap-px bg-gray-200' },
+                        ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day =>
+                            React.createElement('div', { key: day, className: 'bg-gray-50 p-2 text-center font-medium text-sm' }, day)
+                        ),
+                        
+                        days.map((day, idx) => {
+                            const dayEvents = getDayEvents(day);
+                            const isCurrentMonth = day.getMonth() === currentDate.getMonth();
+                            const isToday = day.toDateString() === today.toDateString();
+                            
+                            return React.createElement('div', { 
+                                key: idx, 
+                                className: `bg-white p-2 min-h-24 ${!isCurrentMonth ? 'text-gray-400 bg-gray-50' : ''} ${isToday ? 'bg-blue-50 border-blue-200' : ''}`
+                            },
+                                React.createElement('div', { className: `text-sm font-medium mb-1 ${isToday ? 'text-blue-600' : ''}` }, day.getDate()),
+                                React.createElement('div', { className: 'space-y-1' },
+                                    dayEvents.slice(0, 3).map((event, eventIdx) =>
+                                        React.createElement('div', { 
+                                            key: eventIdx,
+                                            className: 'text-xs bg-blue-100 text-blue-800 p-1 rounded truncate',
+                                            title: event.summary
+                                        }, event.summary)
+                                    ),
+                                    dayEvents.length > 3 && React.createElement('div', { className: 'text-xs text-gray-500' }, `+${dayEvents.length - 3} more`)
+                                )
+                            );
+                        })
+                    )
+                );
+            };
+
+            // List View
+            const ListView = () => {
+                // Filter events to only show June 2025 onwards
+                const filteredEvents = events.filter(event => 
+                    event.dtstart >= new Date(2025, 5, 1)
+                );
+                
+                const groupedEvents = filteredEvents.reduce((acc, event) => {
+                    const dateKey = event.dtstart.toDateString();
+                    if (!acc[dateKey]) acc[dateKey] = [];
+                    acc[dateKey].push(event);
+                    return acc;
+                }, {});
+
+                return React.createElement('div', { className: 'bg-white rounded-lg shadow-sm border' },
+                    React.createElement('div', { className: 'p-4 border-b' },
+                        React.createElement('h2', { className: 'text-xl font-bold' }, 'All Events (June 2025 onwards)')
+                    ),
+                    React.createElement('div', { className: 'p-4 space-y-6' },
+                        Object.entries(groupedEvents).map(([date, dayEvents]) =>
+                            React.createElement('div', { key: date },
+                                React.createElement('h3', { className: 'text-lg font-semibold text-gray-700 mb-3' },
+                                    new Date(date).toLocaleDateString('en-US', { 
+                                        weekday: 'long', 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    })
+                                ),
+                                React.createElement('div', { className: 'space-y-2' },
+                                    dayEvents.map((event, idx) =>
+                                        React.createElement('div', { key: idx, className: 'bg-gray-50 rounded-lg p-4 border-l-4 border-green-500' },
+                                            React.createElement('h4', { className: 'font-medium text-gray-900' }, event.summary),
+                                            React.createElement('p', { className: 'text-sm text-gray-600 mt-1' },
+                                                event.allDay ? 'All day' : `${formatTime(event.dtstart)} - ${event.dtend ? formatTime(event.dtend) : ''}`
+                                            ),
+                                            event.location && React.createElement('p', { className: 'text-sm text-gray-500 mt-1' }, `📍 ${event.location}`),
+                                            event.description && React.createElement('p', { className: 'text-sm text-gray-600 mt-2' }, event.description)
+                                        )
+                                    )
+                                )
+                            )
+                        ),
+                        filteredEvents.length === 0 && React.createElement('p', { className: 'text-center text-gray-500 py-8' }, 'No events from June 2025 onwards. Upload an ICS file to get started.')
+                    )
+                );
+            };
+
+            const renderView = () => {
+                switch (viewMode) {
+                    case 'month-week':
+                        return MonthWeekView();
+                    case 'calendar':
+                        return CalendarGridView();
+                    case 'list':
+                        return ListView();
+                    default:
+                        return MonthWeekView();
+                }
+            };
+
+            return React.createElement('div', { className: 'min-h-screen bg-gray-100 p-4' },
+                React.createElement('div', { className: 'max-w-6xl mx-auto' },
+                    // Header
+                    React.createElement('div', { className: 'bg-white rounded-lg shadow-sm border p-6 mb-6' },
+                        React.createElement('div', { className: 'flex items-center justify-between mb-4' },
+                            React.createElement('div', { className: 'flex items-center space-x-3' },
+                                React.createElement(Calendar, { className: 'h-8 w-8 text-blue-600' }),
+                                React.createElement('h1', { className: 'text-3xl font-bold text-gray-900' }, 'Calendar Visualizer')
+                            ),
+                            
+                            React.createElement('div', { className: 'flex items-center space-x-4' },
+                                // View Mode Selector
+                                React.createElement('div', { className: 'flex items-center space-x-2' },
+                                    React.createElement(Eye, { className: 'h-5 w-5 text-gray-600' }),
+                                    React.createElement('select', { 
+                                        value: viewMode, 
+                                        onChange: (e) => setViewMode(e.target.value),
+                                        className: 'border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                                    },
+                                        React.createElement('option', { value: 'month-week' }, 'Month by Week'),
+                                        React.createElement('option', { value: 'calendar' }, 'Calendar Grid'),
+                                        React.createElement('option', { value: 'list' }, 'Event List')
+                                    )
+                                ),
+                                
+                                // File Upload
+                                React.createElement('button', { 
+                                    onClick: () => fileInputRef.current?.click(),
+                                    className: 'flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors'
+                                },
+                                    React.createElement(Upload, { className: 'h-4 w-4' }),
+                                    React.createElement('span', null, 'Upload ICS')
+                                ),
+                                React.createElement('input', { 
+                                    ref: fileInputRef,
+                                    type: 'file', 
+                                    accept: '.ics',
+                                    onChange: handleFileUpload,
+                                    className: 'hidden'
+                                })
+                            )
+                        ),
+                        
+                        events.length > 0 && React.createElement('div', { className: 'text-sm text-gray-600' }, `📅 ${events.length} events loaded`)
+                    ),
+
+                    // Main Content
+                    renderView()
+                )
+            );
+        };
+
+        ReactDOM.render(React.createElement(CalendarVisualizer), document.getElementById('root'));
+    </script>
+</body>
+</html>
